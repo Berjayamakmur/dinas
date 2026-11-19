@@ -1,0 +1,1944 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FinReport - Laporan Keuangan Tugas Proyek | PT Berjaya Makmur Indonesia</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #f7f5f0;
+      color: #1c1b18;
+    }
+    .hero-dark-card {
+      background: radial-gradient(circle at 88% 22%, rgba(234, 179, 8, 0.24) 0%, rgba(28, 27, 24, 0) 58%),
+                  linear-gradient(135deg, #25231e 0%, #171614 100%);
+    }
+    .bar-chart-col {
+      transition: height 0.45s cubic-bezier(0.22, 1, 0.36, 1), background-color 0.2s ease;
+    }
+    @media print {
+      body {
+        background-color: white !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      .print-hidden {
+        display: none !important;
+      }
+      .print-block {
+        display: block !important;
+      }
+      .page-break-inside-avoid {
+        break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+<body class="bg-[#f7f5f0] text-[#1c1b18] antialiased selection:bg-[#1c1b18] selection:text-[#eab308]">
+
+  <div id="app"></div>
+
+  <script>
+    // ==========================================
+    // KONFIGURASI GOOGLE SPREADSHEET & STATE GLOBAL
+    // ==========================================
+    let GSHEET_API_URL = 'https://script.google.com/macros/s/AKfycbzm13wWFryeA-pWJeYfyjnWtgum9pSp6QXe28DqujJNYgiVBNigsZR2KI24T6R4CgHp/exec';
+    let isSyncing = false;
+    let showGSheetModal = false;
+
+    function getTodayDate() {
+      return new Date().toISOString().split('T')[0];
+    }
+
+    // Data awal (fallback sebelum sinkronisasi Google Spreadsheet selesai)
+    let users = [
+      { id: 1, name: 'Administrator', role: 'admin', pin: '8888', photo: '' },
+      { id: 2, name: 'Budi Santoso', role: 'employee', pin: '1234', photo: '' },
+      { id: 3, name: 'Siti Aminah', role: 'employee', pin: '1234', photo: '' }
+    ];
+
+    let reports = [
+      { id: 101, empId: 2, projectName: 'Proyek Pembangunan Alpha', type: 'Pemasukan', plafon: 50000000, riil: 50000000, date: '2026-11-01', desc: 'Dana Anggaran Awal Proyek', receipt: '' },
+      { id: 102, empId: 2, projectName: 'Proyek Pembangunan Alpha', type: 'Pengeluaran', plafon: 0, riil: 14500000, date: '2026-11-05', desc: 'Pembelian Material Dasar & Semen', receipt: '' },
+      { id: 103, empId: 2, projectName: 'Proyek Pembangunan Alpha', type: 'Pengeluaran', plafon: 0, riil: 4250000, date: '2026-11-07', desc: 'Sewa Alat Berat & Transportasi', receipt: '' },
+      { id: 104, empId: 3, projectName: 'Renovasi Gedung B', type: 'Pemasukan', plafon: 30000000, riil: 30000000, date: '2026-11-10', desc: 'Dana Anggaran Termin 1', receipt: '' },
+      { id: 105, empId: 3, projectName: 'Renovasi Gedung B', type: 'Pengeluaran', plafon: 0, riil: 5200000, date: '2026-11-12', desc: 'Upah Tenaga Kerja Harian', receipt: '' }
+    ];
+
+    let currentUser = null;
+    let activeTab = 'dashboard';
+    let selectedEmpFilter = 'all';
+    let selectedPrintProject = 'all';
+
+    // State Form Input Batch (Multi-Rincian Pengeluaran)
+    let isAddingBatch = false;
+    let formProjectName = '';
+    let formBudgetAmount = '';
+    let formBudgetDate = getTodayDate();
+    let formBudgetDesc = 'Dana Anggaran Proyek';
+    let formItems = [
+      { tempId: 1, riil: '', date: getTodayDate(), desc: '', receipt: '' }
+    ];
+
+    // State Inline Edit & Modal
+    let editingReportId = null;
+    let editFormData = {};
+    let confirmDeleteId = null;
+    let previewReceiptModal = null;
+    let newEmpPhotoData = '';
+    let toastMessage = null;
+
+    // ==========================================
+    // IKON SVG & LOGO PERUSAHAAN
+    // ==========================================
+    const icons = {
+      dashboard: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>`,
+      report: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" x2="8" y1="13" y2="13"/><line x1="16" x2="8" y1="17" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`,
+      settings: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
+      logout: `<svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>`,
+      print: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></svg>`,
+      plus: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
+      trash: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
+      folder: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`,
+      sheet: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="9" x2="9" y2="21"/></svg>`,
+      receipt: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 17.5v-11"/></svg>`,
+      wallet: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>`,
+      chart: `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>`,
+      sun: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>`,
+      chevronRight: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`,
+      refresh: `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>`
+    };
+
+    function renderBerjayaLogo(heightClass = "h-12") {
+      return `
+        <svg viewBox="0 0 240 100" class="${heightClass} w-auto select-none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M 28 36 C 75 14, 175 10, 224 25 C 232 28, 226 39, 214 43 L 204 46 C 208 36, 198 30, 178 28 C 132 23, 72 28, 28 36 Z" fill="#dc1e25"/>
+          <path d="M 212 64 C 165 86, 65 90, 16 75 C 8 72, 14 61, 26 57 L 36 54 C 32 64, 42 70, 62 72 C 108 77, 168 72, 212 64 Z" fill="#dc1e25"/>
+          <text x="120" y="61" text-anchor="middle" font-family="'Inter', Arial, sans-serif" font-weight="800" font-size="37" letter-spacing="-0.5" fill="#181b78">Berjaya</text>
+        </svg>
+      `;
+    }
+
+    // ==========================================
+    // FUNGSI BANTU (FORMAT, SAPAAN, AVATAR, KOMPRESI, TOAST)
+    // ==========================================
+    function formatIDR(num) {
+      return new Intl.NumberFormat('id-ID', {
+        style: 'currency',
+        currency: 'IDR',
+        minimumFractionDigits: 0
+      }).format(Number(num) || 0);
+    }
+
+    function formatShortIDR(num) {
+      const val = Number(num) || 0;
+      if (val === 0) return '0';
+      if (Math.abs(val) >= 1000000000) {
+        return (val / 1000000000).toFixed(1).replace('.0', '').replace('.', ',') + 'M';
+      }
+      if (Math.abs(val) >= 1000000) {
+        return (val / 1000000).toFixed(1).replace('.0', '').replace('.', ',') + 'jt';
+      }
+      if (Math.abs(val) >= 1000) {
+        return Math.round(val / 1000) + 'rb';
+      }
+      return String(val);
+    }
+
+    function formatNumber(num) {
+      return new Intl.NumberFormat('id-ID').format(Number(num) || 0);
+    }
+
+    function getDynamicGreeting() {
+      const hour = new Date().getHours();
+      if (hour >= 4 && hour < 11) return 'Selamat pagi';
+      if (hour >= 11 && hour < 15) return 'Selamat siang';
+      if (hour >= 15 && hour < 18) return 'Selamat sore';
+      return 'Selamat malam';
+    }
+
+    function getProjectBadgeColor(index) {
+      const palettes = [
+        'bg-[#1f6f5b] text-white',
+        'bg-[#b93815] text-white',
+        'bg-[#7e22ce] text-white',
+        'bg-[#1d4ed8] text-white',
+        'bg-[#b45309] text-white',
+        'bg-[#334155] text-white'
+      ];
+      return palettes[index % palettes.length];
+    }
+
+    function getInitials(text) {
+      if (!text) return 'PR';
+      const words = text.trim().split(/\s+/);
+      if (words.length === 1) return words[0].substring(0, 2).toUpperCase();
+      return (words[0][0] + words[1][0]).toUpperCase();
+    }
+
+    function renderAvatar(userObj, sizeClass = "w-9 h-9", textClass = "text-xs", bgClass = "bg-[#1c1b18] text-white") {
+      if (userObj && userObj.photo) {
+        return `<img src="${userObj.photo}" alt="${userObj.name}" class="${sizeClass} rounded-full object-cover border border-[#e5e0d8] shrink-0">`;
+      }
+      const initial = userObj && userObj.name ? userObj.name.charAt(0).toUpperCase() : '?';
+      return `<div class="${sizeClass} rounded-full ${bgClass} flex items-center justify-center font-bold ${textClass} shrink-0">${initial}</div>`;
+    }
+
+    function compressImageToDataURL(file, callback, maxSize = 140, quality = 0.78) {
+      const reader = new FileReader();
+      reader.onload = function(event) {
+        const img = new Image();
+        img.onload = function() {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          if (width > height) {
+            if (width > maxSize) {
+              height = Math.round((height * maxSize) / width);
+              width = maxSize;
+            }
+          } else {
+            if (height > maxSize) {
+              width = Math.round((width * maxSize) / height);
+              height = maxSize;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          callback(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function showToast(message, type = 'success') {
+      toastMessage = { message, type };
+      render();
+      setTimeout(() => {
+        if (toastMessage && toastMessage.message === message) {
+          toastMessage = null;
+          render();
+        }
+      }, 3500);
+    }
+
+    // ==========================================
+    // INTEGRASI GOOGLE SPREADSHEET (APPS SCRIPT API)
+    // ==========================================
+    async function syncFromGSheet() {
+      if (!GSHEET_API_URL) return;
+      isSyncing = true;
+      render();
+      try {
+        const response = await fetch(GSHEET_API_URL);
+        const result = await response.json();
+        if (result.status === 'success') {
+          if (Array.isArray(result.users) && result.users.length > 0) {
+            users = result.users;
+            if (currentUser) {
+              const refreshedUser = users.find(u => Number(u.id) === Number(currentUser.id));
+              if (refreshedUser) currentUser = refreshedUser;
+            }
+          }
+          if (Array.isArray(result.reports)) {
+            reports = result.reports;
+          }
+          showToast('Data berhasil disinkronkan dari Google Spreadsheet');
+        } else {
+          showToast('Gagal memuat data Spreadsheet: ' + (result.message || 'Error'), 'error');
+        }
+      } catch (err) {
+        showToast('Koneksi Google Spreadsheet gagal. Menggunakan data lokal sementara.', 'error');
+      } finally {
+        isSyncing = false;
+        render();
+      }
+    }
+
+    async function pushToGSheet(payload) {
+      if (!GSHEET_API_URL) return;
+      try {
+        await fetch(GSHEET_API_URL, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify(payload)
+        });
+      } catch (err) {
+        console.error('Gagal mengirim ke Google Sheets:', err);
+      }
+    }
+
+    // ==========================================
+    // RENDERER UTAMA & NAVIGASI
+    // ==========================================
+    function render() {
+      const app = document.getElementById('app');
+      if (!app) return;
+
+      const toastHTML = toastMessage ? `
+        <div class="fixed bottom-20 md:bottom-6 left-4 right-4 md:left-auto md:right-6 z-50 px-5 py-3.5 rounded-2xl shadow-xl text-xs font-semibold text-white flex items-center justify-center md:justify-start gap-2.5 transition-all print-hidden ${
+          toastMessage.type === 'error' ? 'bg-red-600' : toastMessage.type === 'info' ? 'bg-[#1c1b18]' : 'bg-[#1f6f5b]'
+        }">
+          <span class="w-2 h-2 rounded-full ${toastMessage.type === 'error' ? 'bg-red-200' : 'bg-[#eab308]'}"></span>
+          <span>${toastMessage.message}</span>
+        </div>
+      ` : '';
+
+      if (!currentUser) {
+        app.innerHTML = renderLoginScreen() + (showGSheetModal ? renderGSheetModal() : '') + toastHTML;
+        return;
+      }
+
+      const relevantCount = currentUser.role === 'admin'
+        ? reports.length
+        : reports.filter(r => Number(r.empId) === Number(currentUser.id)).length;
+
+      app.innerHTML = `
+        <div class="min-h-screen flex flex-col md:flex-row bg-[#f7f5f0] text-[#1c1b18]">
+          <!-- SIDEBAR DESKTOP (WARM SAND / CREAM) -->
+          <aside class="hidden md:flex w-64 bg-[#f2efe9] border-r border-[#e6e1d8] flex-col shrink-0 print-hidden">
+            <!-- Brand Header -->
+            <div class="p-5 border-b border-[#e6e1d8]">
+              <div class="flex items-center gap-3">
+                <div class="bg-white rounded-xl p-1.5 border border-[#e6e1d8] shadow-2xs shrink-0">
+                  ${renderBerjayaLogo("h-8")}
+                </div>
+                <div class="min-w-0">
+                  <p class="text-xs font-extrabold tracking-tight text-[#1c1b18] truncate">PT Berjaya Makmur</p>
+                  <p class="text-[10px] font-bold uppercase tracking-wider text-[#8c867c]">FINREPORT PROYEK</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Menu Navigasi -->
+            <div class="flex-1 px-4 py-5 space-y-6 overflow-y-auto">
+              <div>
+                <p class="px-3 mb-2.5 text-[10px] font-bold uppercase tracking-widest text-[#948e84]">MENU</p>
+                <nav class="space-y-1.5">
+                  <button onclick="switchTab('dashboard')" class="w-full flex items-center justify-between px-3.5 py-2.5 rounded-2xl text-sm font-semibold transition-all ${
+                    activeTab === 'dashboard'
+                      ? 'bg-[#1c1b18] text-white shadow-sm'
+                      : 'text-[#5c5850] hover:bg-[#e8e3da]/70 hover:text-[#1c1b18]'
+                  }">
+                    <span class="flex items-center gap-3">
+                      <span class="${activeTab === 'dashboard' ? 'text-[#eab308]' : 'text-[#78736a]'}">${icons.dashboard}</span>
+                      Dashboard
+                    </span>
+                    ${activeTab === 'dashboard' ? `<span class="w-1.5 h-1.5 rounded-full bg-[#eab308]"></span>` : ''}
+                  </button>
+
+                  <button onclick="switchTab('reports')" class="w-full flex items-center justify-between px-3.5 py-2.5 rounded-2xl text-sm font-semibold transition-all ${
+                    activeTab === 'reports'
+                      ? 'bg-[#1c1b18] text-white shadow-sm'
+                      : 'text-[#5c5850] hover:bg-[#e8e3da]/70 hover:text-[#1c1b18]'
+                  }">
+                    <span class="flex items-center gap-3">
+                      <span class="${activeTab === 'reports' ? 'text-[#eab308]' : 'text-[#78736a]'}">${icons.report}</span>
+                      Laporan Proyek
+                    </span>
+                    <span class="text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                      activeTab === 'reports' ? 'bg-[#eab308] text-[#1c1b18]' : 'bg-[#e5e0d6] text-[#5c5850]'
+                    }">${relevantCount}</span>
+                  </button>
+
+                  <button onclick="switchTab('settings')" class="w-full flex items-center justify-between px-3.5 py-2.5 rounded-2xl text-sm font-semibold transition-all ${
+                    activeTab === 'settings'
+                      ? 'bg-[#1c1b18] text-white shadow-sm'
+                      : 'text-[#5c5850] hover:bg-[#e8e3da]/70 hover:text-[#1c1b18]'
+                  }">
+                    <span class="flex items-center gap-3">
+                      <span class="${activeTab === 'settings' ? 'text-[#eab308]' : 'text-[#78736a]'}">${icons.settings}</span>
+                      ${currentUser.role === 'admin' ? 'Karyawan & Admin' : 'Profil & PIN'}
+                    </span>
+                    ${activeTab === 'settings' ? `<span class="w-1.5 h-1.5 rounded-full bg-[#eab308]"></span>` : ''}
+                  </button>
+                </nav>
+              </div>
+            </div>
+
+            <!-- Kartu Status Cloud Google Sheets -->
+            <div class="px-4 pb-3">
+              <div class="bg-[#ebe6dc] border border-[#dfd9cd] rounded-2xl p-3.5 space-y-2.5">
+                <p class="text-[11px] leading-relaxed text-[#5c5850]">
+                  ${GSHEET_API_URL
+                    ? 'Data terhubung dengan Google Spreadsheet cloud secara real-time.'
+                    : 'Mode penyimpanan lokal aktif. Hubungkan Spreadsheet untuk cadangan cloud.'}
+                </p>
+                <button onclick="toggleGSheetModal(true)" class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-white hover:bg-[#faf8f5] border border-[#dcd6c9] text-xs font-bold text-[#1c1b18] shadow-2xs transition-colors">
+                  <span class="w-2 h-2 rounded-full ${GSHEET_API_URL ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}"></span>
+                  ${icons.sheet} Google Sheets
+                </button>
+              </div>
+            </div>
+
+            <!-- Profil & Logout -->
+            <div class="p-4 border-t border-[#e6e1d8]">
+              <div class="flex items-center gap-3 px-1.5 mb-3">
+                ${renderAvatar(currentUser, "w-9 h-9", "text-xs", "bg-[#1c1b18] text-[#eab308]")}
+                <div class="min-w-0">
+                  <p class="text-xs font-bold text-[#1c1b18] truncate">${currentUser.name}</p>
+                  <p class="text-[11px] text-[#78736a] capitalize">${currentUser.role === 'admin' ? 'Administrator' : 'Karyawan'}</p>
+                </div>
+              </div>
+              <button onclick="handleLogout()" class="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold text-red-700 bg-red-50/80 hover:bg-red-100 border border-red-200/70 transition-colors">
+                ${icons.logout} Keluar Akun
+              </button>
+            </div>
+          </aside>
+
+          <!-- HEADER MOBILE (KHUSUS HP) -->
+          <div class="md:hidden bg-[#f2efe9] border-b border-[#e6e1d8] text-[#1c1b18] px-4 py-3 flex items-center justify-between sticky top-0 z-30 print-hidden">
+            <div class="flex items-center gap-2.5 min-w-0">
+              <div class="bg-white rounded-xl p-1 border border-[#e6e1d8] shrink-0">
+                ${renderBerjayaLogo("h-6")}
+              </div>
+              <div class="min-w-0">
+                <p class="text-xs font-bold truncate">${currentUser.name}</p>
+                <p class="text-[10px] text-[#78736a] truncate">PT Berjaya Makmur Indonesia</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              ${GSHEET_API_URL ? `
+                <button onclick="syncFromGSheet()" ${isSyncing ? 'disabled' : ''} title="Sinkronkan Data" class="p-2 rounded-xl bg-white border border-[#e6e1d8] text-[#1c1b18] text-xs font-bold">
+                  ${isSyncing ? '⏳' : icons.refresh}
+                </button>
+              ` : ''}
+              <button onclick="handleLogout()" title="Keluar" class="p-2 rounded-xl bg-red-50 border border-red-200 text-red-700">
+                ${icons.logout}
+              </button>
+            </div>
+          </div>
+
+          <!-- KONTEN UTAMA -->
+          <main class="flex-1 flex flex-col min-w-0 pb-24 md:pb-8">
+            <!-- Top Bar Desktop -->
+            <header class="hidden md:flex h-16 px-8 items-center justify-between shrink-0 print-hidden">
+              <div class="flex items-center gap-2 text-xs font-medium text-[#78736a]">
+                <span>PT Berjaya Makmur Indonesia</span>
+                <span>/</span>
+                <span class="font-bold text-[#1c1b18]">
+                  ${activeTab === 'dashboard' ? 'Dashboard' : activeTab === 'reports' ? 'Laporan Proyek' : (currentUser.role === 'admin' ? 'Karyawan & Admin' : 'Profil & PIN')}
+                </span>
+              </div>
+
+              <div class="flex items-center gap-2.5">
+                ${GSHEET_API_URL ? `
+                  <button onclick="syncFromGSheet()" ${isSyncing ? 'disabled' : ''} class="inline-flex items-center gap-1.5 text-xs font-semibold px-3.5 py-2 rounded-full bg-white text-[#1c1b18] border border-[#e6e1d8] hover:bg-[#f2efe9] shadow-2xs transition-colors">
+                    ${icons.refresh}
+                    <span>${isSyncing ? 'Menyinkronkan...' : 'Sinkronkan'}</span>
+                  </button>
+                ` : ''}
+                ${activeTab !== 'reports' ? `
+                  <button onclick="goToQuickNewReport()" class="inline-flex items-center gap-1.5 text-xs font-bold px-4 py-2 rounded-full bg-[#1c1b18] text-white hover:bg-[#32302b] shadow-xs transition-colors">
+                    ${icons.plus}
+                    <span>Baru</span>
+                  </button>
+                ` : ''}
+              </div>
+            </header>
+
+            <!-- Area Konten -->
+            <div class="flex-1 px-4 sm:px-6 md:px-8 pt-3 md:pt-1 overflow-y-auto print:p-0 print:overflow-visible">
+              ${activeTab === 'dashboard' ? renderDashboard() : ''}
+              ${activeTab === 'reports' ? renderReportManager() : ''}
+              ${activeTab === 'settings' ? renderSettings() : ''}
+            </div>
+          </main>
+
+          <!-- NAVIGASI BAWAH MOBILE (KHUSUS HP) -->
+          <nav class="md:hidden fixed bottom-0 inset-x-0 bg-[#f2efe9]/95 backdrop-blur-md border-t border-[#e6e1d8] z-40 grid grid-cols-3 py-1.5 px-2 shadow-lg print-hidden">
+            <button onclick="switchTab('dashboard')" class="flex flex-col items-center justify-center py-1.5 rounded-2xl text-[11px] font-semibold transition-colors ${
+              activeTab === 'dashboard' ? 'bg-[#1c1b18] text-white' : 'text-[#5c5850]'
+            }">
+              ${icons.dashboard}
+              <span class="mt-0.5">Dashboard</span>
+            </button>
+            <button onclick="switchTab('reports')" class="flex flex-col items-center justify-center py-1.5 rounded-2xl text-[11px] font-semibold transition-colors ${
+              activeTab === 'reports' ? 'bg-[#1c1b18] text-white' : 'text-[#5c5850]'
+            }">
+              ${icons.report}
+              <span class="mt-0.5">Proyek</span>
+            </button>
+            <button onclick="switchTab('settings')" class="flex flex-col items-center justify-center py-1.5 rounded-2xl text-[11px] font-semibold transition-colors ${
+              activeTab === 'settings' ? 'bg-[#1c1b18] text-white' : 'text-[#5c5850]'
+            }">
+              ${icons.settings}
+              <span class="mt-0.5">${currentUser.role === 'admin' ? 'Karyawan' : 'Profil'}</span>
+            </button>
+          </nav>
+        </div>
+
+        ${showGSheetModal ? renderGSheetModal() : ''}
+        ${confirmDeleteId !== null ? renderDeleteModal() : ''}
+        ${previewReceiptModal ? renderReceiptPreviewModal() : ''}
+        ${toastHTML}
+      `;
+    }
+
+    function switchTab(tab) {
+      activeTab = tab;
+      isAddingBatch = false;
+      editingReportId = null;
+      render();
+    }
+
+    function goToQuickNewReport() {
+      activeTab = 'reports';
+      if (currentUser.role === 'admin' && selectedEmpFilter === 'all') {
+        const firstEmp = users.find(u => u.role === 'employee');
+        if (firstEmp) selectedEmpFilter = String(firstEmp.id);
+      }
+      openBatchForm('');
+    }
+
+    function handleLogout() {
+      currentUser = null;
+      activeTab = 'dashboard';
+      selectedEmpFilter = 'all';
+      selectedPrintProject = 'all';
+      render();
+    }
+
+    // ==========================================
+    // 1. HALAMAN LOGIN
+    // ==========================================
+    function renderLoginScreen() {
+      return `
+        <div class="min-h-screen bg-[#f7f5f0] flex items-center justify-center p-4">
+          <div class="bg-white border border-[#e6e1d8] rounded-3xl shadow-xl w-full max-w-md p-8">
+            <div class="text-center mb-7">
+              <div class="inline-flex justify-center bg-[#f7f5f0] border border-[#ebe7df] rounded-2xl px-5 py-3 mb-4">
+                ${renderBerjayaLogo("h-14")}
+              </div>
+              <h1 class="text-lg font-extrabold text-[#1c1b18] tracking-tight">PT BERJAYA MAKMUR INDONESIA</h1>
+              <p class="text-xs text-[#78736a] mt-1">Sistem Laporan Keuangan Tugas Proyek</p>
+            </div>
+
+            <form onsubmit="handleLoginSubmit(event)" class="space-y-4">
+              <div>
+                <label class="block text-xs font-bold text-[#5c5850] uppercase mb-1.5">Pilih Akun Pengguna</label>
+                <select id="login-user-select" required class="w-full border border-[#dfd9cd] rounded-2xl px-4 py-3 text-sm bg-[#faf8f5] focus:bg-white focus:ring-2 focus:ring-[#1c1b18] focus:outline-none">
+                  <option value="" disabled selected>-- Pilih Nama Karyawan / Admin --</option>
+                  ${users.map(u => `
+                    <option value="${u.id}">${u.name} (${u.role === 'admin' ? 'Admin' : 'Karyawan'})</option>
+                  `).join('')}
+                </select>
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-[#5c5850] uppercase mb-1.5">PIN Keamanan</label>
+                <input type="password" id="login-pin-input" required maxlength="6" placeholder="Masukkan 4-6 digit PIN" class="w-full border border-[#dfd9cd] rounded-2xl px-4 py-3 text-sm bg-[#faf8f5] focus:bg-white focus:ring-2 focus:ring-[#1c1b18] focus:outline-none tracking-widest">
+              </div>
+
+              <button type="submit" class="w-full bg-[#1c1b18] hover:bg-[#32302b] text-white font-bold py-3.5 rounded-2xl text-sm shadow-md transition-colors mt-2">
+                Masuk ke Aplikasi
+              </button>
+            </form>
+
+            <div class="mt-6 pt-4 border-t border-[#efeae1] flex items-center justify-between text-[11px] text-[#8c867c]">
+              <span>Admin PIN: 8888 | Karyawan PIN: 1234</span>
+              <button onclick="toggleGSheetModal(true)" class="text-[#1c1b18] font-bold hover:underline">
+                Setup Google Sheets
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function handleLoginSubmit(e) {
+      e.preventDefault();
+      const userId = document.getElementById('login-user-select').value;
+      const pin = document.getElementById('login-pin-input').value.trim();
+      const found = users.find(u => String(u.id) === String(userId));
+
+      if (found && String(found.pin) === pin) {
+        currentUser = found;
+        activeTab = 'dashboard';
+        showToast(`Selamat datang, ${found.name}!`);
+        render();
+      } else {
+        showToast('PIN salah atau akun tidak ditemukan!', 'error');
+      }
+    }
+
+    // ==========================================
+    // 2. DASHBOARD MODERN (WARM CREAM & DARK CHARCOAL)
+    // ==========================================
+    function getLast6MonthsExpenseSeries(relevantReports) {
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+      const now = new Date();
+      const series = [];
+
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const year = d.getFullYear();
+        const month = d.getMonth();
+        const ymPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+
+        const monthTotal = relevantReports
+          .filter(r => r.type === 'Pengeluaran' && String(r.date || '').startsWith(ymPrefix))
+          .reduce((sum, r) => sum + (Number(r.riil) || 0), 0);
+
+        series.push({
+          key: ymPrefix,
+          label: monthNames[month],
+          value: monthTotal,
+          isCurrent: i === 0
+        });
+      }
+      return series;
+    }
+
+    function renderDashboard() {
+      const relevantReports = currentUser.role === 'admin'
+        ? reports
+        : reports.filter(r => Number(r.empId) === Number(currentUser.id));
+
+      const pemasukanList = relevantReports.filter(r => r.type === 'Pemasukan');
+      const pengeluaranList = relevantReports.filter(r => r.type === 'Pengeluaran');
+
+      const totalPemasukan = pemasukanList.reduce((s, r) => s + (Number(r.riil) || 0), 0);
+      const totalPengeluaran = pengeluaranList.reduce((s, r) => s + (Number(r.riil) || 0), 0);
+      const sisaAnggaran = totalPemasukan - totalPengeluaran;
+      const persenTerpakai = totalPemasukan > 0 ? Math.round((totalPengeluaran / totalPemasukan) * 100) : 0;
+
+      const groupedProjects = groupReportsByProject(relevantReports);
+      const totalProyek = groupedProjects.length;
+      const overBudgetCount = groupedProjects.filter(g => g.selisih < 0).length;
+
+      const todayFormatted = new Date().toLocaleDateString('id-ID', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      });
+
+      const monthlySeries = getLast6MonthsExpenseSeries(relevantReports);
+      const maxMonthlyVal = Math.max(...monthlySeries.map(m => m.value), 1);
+
+      // Proporsi pengeluaran per karyawan (khusus Admin)
+      const empBreakdown = currentUser.role === 'admin'
+        ? users.filter(u => u.role === 'employee').map((emp, idx) => {
+            const spent = reports
+              .filter(r => Number(r.empId) === Number(emp.id) && r.type === 'Pengeluaran')
+              .reduce((s, r) => s + (Number(r.riil) || 0), 0);
+            const budget = reports
+              .filter(r => Number(r.empId) === Number(emp.id) && r.type === 'Pemasukan')
+              .reduce((s, r) => s + (Number(r.riil) || 0), 0);
+            return {
+              id: emp.id,
+              name: emp.name,
+              photo: emp.photo,
+              spent,
+              budget,
+              badgeClass: getProjectBadgeColor(idx)
+            };
+          }).sort((a, b) => b.spent - a.spent)
+        : [];
+
+      const recentTransactions = relevantReports.slice().reverse().slice(0, 4);
+
+      return `
+        <div class="max-w-7xl mx-auto space-y-6">
+          <!-- TOP GREETING & QUICK ACTIONS HEADER -->
+          <div class="flex flex-col lg:flex-row lg:items-end justify-between gap-4 pt-1">
+            <div>
+              <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#efeae1] border border-[#e3ddd1] text-xs font-semibold text-[#5c5850] mb-3">
+                <span class="text-[#eab308]">${icons.sun}</span>
+                <span>${todayFormatted}</span>
+              </div>
+              <h1 class="text-2xl sm:text-3xl font-extrabold tracking-tight text-[#1c1b18]">
+                ${getDynamicGreeting()}, <span class="text-[#1c1b18]">${currentUser.name}</span>
+              </h1>
+              <p class="text-xs sm:text-sm text-[#78736a] mt-1">
+                ${totalProyek} tugas proyek aktif &bull; ${relevantReports.length} rincian transaksi tercatat${overBudgetCount > 0 ? ` &bull; <span class="text-red-600 font-semibold">${overBudgetCount} proyek melebihi anggaran</span>` : ''}
+              </p>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2.5">
+              <button onclick="switchTab('reports')" class="inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-white hover:bg-[#f2efe9] text-[#1c1b18] border border-[#e3ddd1] text-xs sm:text-sm font-bold shadow-2xs transition-colors">
+                ${icons.chart}
+                <span>Laporan</span>
+              </button>
+              <button onclick="goToQuickNewReport()" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#1c1b18] hover:bg-[#32302b] text-white text-xs sm:text-sm font-bold shadow-sm transition-colors">
+                ${icons.plus}
+                <span>Proyek / Rincian Baru</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 4 KARTU KPI UTAMA -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+            <!-- Kartu 1: Hero Card Gelap (Total Dana Anggaran) -->
+            <div onclick="switchTab('reports')" class="cursor-pointer hero-dark-card text-white p-5 sm:p-6 rounded-3xl shadow-md border border-[#2d2b26] flex flex-col justify-between min-h-[152px] hover:translate-y-[-2px] transition-transform">
+              <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 rounded-xl bg-[#eab308] text-[#1c1b18] flex items-center justify-center shrink-0">
+                  ${icons.wallet}
+                </div>
+                <span class="text-xs font-semibold text-[#d6d1c7]">Total Dana Anggaran</span>
+              </div>
+              <div class="mt-4">
+                <h3 class="text-2xl sm:text-[26px] font-extrabold tracking-tight text-white leading-tight">
+                  ${formatIDR(totalPemasukan)}
+                </h3>
+                <p class="text-[11px] font-medium text-[#eab308] mt-1.5 flex items-center gap-1">
+                  <span>&#9650; ${pemasukanList.length} termin anggaran masuk</span>
+                </p>
+              </div>
+            </div>
+
+            <!-- Kartu 2: Total Pengeluaran Riil -->
+            <div onclick="switchTab('reports')" class="cursor-pointer bg-white p-5 sm:p-6 rounded-3xl border border-[#ebe7df] shadow-2xs flex flex-col justify-between min-h-[152px] hover:border-[#d5cfc3] transition-colors">
+              <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 rounded-xl bg-[#f4f1ea] text-[#5c5850] flex items-center justify-center shrink-0">
+                  ${icons.receipt}
+                </div>
+                <span class="text-xs font-semibold text-[#78736a]">Pengeluaran Riil</span>
+              </div>
+              <div class="mt-4">
+                <h3 class="text-2xl sm:text-[26px] font-extrabold tracking-tight text-[#1c1b18] leading-tight">
+                  ${formatIDR(totalPengeluaran)}
+                </h3>
+                <div class="flex items-center justify-between text-[11px] text-[#78736a] mt-1.5">
+                  <span>${pengeluaranList.length} item biaya &bull; <strong class="text-[#1c1b18]">${persenTerpakai}% terpakai</strong></span>
+                  <span class="text-[#948e84]">${icons.chevronRight}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Kartu 3: Sisa / Selisih Anggaran -->
+            <div onclick="switchTab('reports')" class="cursor-pointer bg-white p-5 sm:p-6 rounded-3xl border border-[#ebe7df] shadow-2xs flex flex-col justify-between min-h-[152px] hover:border-[#d5cfc3] transition-colors">
+              <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 rounded-xl ${sisaAnggaran >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'} flex items-center justify-center shrink-0">
+                  ${icons.chart}
+                </div>
+                <span class="text-xs font-semibold text-[#78736a]">Sisa / Selisih Anggaran</span>
+              </div>
+              <div class="mt-4">
+                <h3 class="text-2xl sm:text-[26px] font-extrabold tracking-tight ${sisaAnggaran >= 0 ? 'text-[#1c1b18]' : 'text-red-600'} leading-tight">
+                  ${sisaAnggaran >= 0 ? '' : '-'}${formatIDR(Math.abs(sisaAnggaran))}
+                </h3>
+                <div class="flex items-center justify-between text-[11px] mt-1.5">
+                  <span class="${sisaAnggaran >= 0 ? 'text-emerald-700 font-semibold' : 'text-red-600 font-semibold'}">
+                    ${sisaAnggaran >= 0 ? 'Saldo anggaran tersedia' : 'Melebihi plafon anggaran'}
+                  </span>
+                  <span class="text-[#948e84]">${icons.chevronRight}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Kartu 4: Tugas Proyek Aktif -->
+            <div onclick="switchTab('reports')" class="cursor-pointer bg-white p-5 sm:p-6 rounded-3xl border border-[#ebe7df] shadow-2xs flex flex-col justify-between min-h-[152px] hover:border-[#d5cfc3] transition-colors">
+              <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 rounded-xl bg-[#f4f1ea] text-[#5c5850] flex items-center justify-center shrink-0">
+                  ${icons.folder}
+                </div>
+                <span class="text-xs font-semibold text-[#78736a]">Proyek Aktif</span>
+              </div>
+              <div class="mt-4">
+                <h3 class="text-2xl sm:text-[26px] font-extrabold tracking-tight text-[#1c1b18] leading-tight">
+                  ${totalProyek} <span class="text-base font-bold text-[#78736a]">Proyek</span>
+                </h3>
+                <div class="flex items-center justify-between text-[11px] text-[#78736a] mt-1.5">
+                  <span>Total dana Rp ${formatShortIDR(totalPemasukan)}</span>
+                  <span class="text-[#948e84]">${icons.chevronRight}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- BARIS TENGAH: RINCIAN TRANSAKSI TERBARU & GRAFIK BATANG 6 BULAN -->
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            <!-- Kiri (7 Kolom): Rincian Transaksi Terbaru -->
+            <div class="lg:col-span-7 bg-white p-6 rounded-3xl border border-[#ebe7df] shadow-2xs flex flex-col justify-between">
+              <div>
+                <div class="flex items-center justify-between mb-5">
+                  <div>
+                    <h3 class="text-base font-extrabold text-[#1c1b18]">Rincian Transaksi Terbaru</h3>
+                    <p class="text-xs text-[#8c867c] mt-0.5">Aktivitas pemasukan anggaran & realisasi biaya proyek</p>
+                  </div>
+                  <button onclick="switchTab('reports')" class="px-3.5 py-1.5 rounded-full bg-[#f7f5f0] hover:bg-[#ebe6dc] border border-[#e3ddd1] text-xs font-bold text-[#1c1b18] transition-colors">
+                    Lihat semua
+                  </button>
+                </div>
+
+                <div class="divide-y divide-[#f2efe9]">
+                  ${recentTransactions.length === 0 ? `
+                    <div class="py-10 text-center">
+                      <p class="text-xs text-[#8c867c]">Belum ada transaksi proyek yang tercatat.</p>
+                    </div>
+                  ` : ''}
+
+                  ${recentTransactions.map((r, idx) => {
+                    const emp = users.find(u => Number(u.id) === Number(r.empId));
+                    const isIncome = r.type === 'Pemasukan';
+                    return `
+                      <div class="py-3.5 first:pt-1 last:pb-1 flex items-center justify-between gap-3">
+                        <div class="flex items-center gap-3.5 min-w-0">
+                          <div class="w-10 h-10 rounded-full ${getProjectBadgeColor(idx)} flex items-center justify-center text-xs font-extrabold shrink-0 shadow-2xs">
+                            ${getInitials(r.projectName)}
+                          </div>
+                          <div class="min-w-0">
+                            <p class="text-sm font-bold text-[#1c1b18] truncate">${r.desc || r.projectName}</p>
+                            <p class="text-xs text-[#78736a] truncate mt-0.5">
+                              <span>${r.projectName}</span>
+                              <span> &bull; </span>
+                              <span class="${isIncome ? 'text-emerald-700 font-semibold' : 'text-[#5c5850]'}">${r.date}</span>
+                              ${currentUser.role === 'admin' && emp ? ` <span>(${emp.name})</span>` : ''}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div class="text-right shrink-0">
+                          <p class="text-sm font-extrabold ${isIncome ? 'text-emerald-700' : 'text-[#1c1b18]'}">
+                            ${isIncome ? '+' : ''}${formatIDR(r.riil)}
+                          </p>
+                          <span class="inline-block mt-0.5 text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                            isIncome ? 'bg-emerald-50 text-emerald-700' : 'bg-[#f4f1ea] text-[#6e695f]'
+                          }">
+                            ${isIncome ? 'Anggaran' : 'Pengeluaran'}
+                          </span>
+                        </div>
+                      </div>
+                    `;
+                  }).join('')}
+                </div>
+              </div>
+            </div>
+
+            <!-- Kanan (5 Kolom): Grafik Batang Pengeluaran 6 Bulan -->
+            <div class="lg:col-span-5 bg-white p-6 rounded-3xl border border-[#ebe7df] shadow-2xs flex flex-col justify-between">
+              <div class="flex items-center justify-between mb-6">
+                <div>
+                  <h3 class="text-base font-extrabold text-[#1c1b18]">Pengeluaran 6 Bulan</h3>
+                  <p class="text-xs text-[#8c867c] mt-0.5">Tren realisasi biaya per bulan</p>
+                </div>
+                <button onclick="switchTab('reports')" class="px-3.5 py-1.5 rounded-full bg-[#f7f5f0] hover:bg-[#ebe6dc] border border-[#e3ddd1] text-xs font-bold text-[#1c1b18] transition-colors">
+                  Detail
+                </button>
+              </div>
+
+              <!-- Vertical Bar Chart -->
+              <div class="pt-4 pb-1 px-1">
+                <div class="grid grid-cols-6 gap-2.5 sm:gap-3 items-end h-44">
+                  ${monthlySeries.map(m => {
+                    const pct = m.value > 0 ? Math.max(Math.round((m.value / maxMonthlyVal) * 100), 16) : 10;
+                    const barColor = m.isCurrent
+                      ? 'bg-[#eab308]'
+                      : (m.value > 0 ? 'bg-[#3d3a34]' : 'bg-[#ebe7df]');
+                    return `
+                      <div class="flex flex-col items-center h-full justify-end group">
+                        <span class="text-[10px] font-bold mb-1.5 ${m.isCurrent ? 'text-[#1c1b18]' : 'text-[#6e695f]'}">
+                          ${m.value > 0 ? formatShortIDR(m.value) : '-'}
+                        </span>
+                        <div class="w-full max-w-[38px] rounded-xl bar-chart-col ${barColor} group-hover:opacity-85" style="height: ${pct}%;" title="${m.label}: ${formatIDR(m.value)}"></div>
+                        <span class="text-[11px] mt-2 font-semibold ${m.isCurrent ? 'text-[#1c1b18] font-extrabold' : 'text-[#8c867c]'}">
+                          ${m.label}
+                        </span>
+                      </div>
+                    `;
+                  }).join('')}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- BARIS BAWAH: PROYEK BERJALAN & PROPORSI PENGELUARAN -->
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            <!-- Kiri (7 Kolom): Proyek Berjalan -->
+            <div class="lg:col-span-7 bg-white p-6 rounded-3xl border border-[#ebe7df] shadow-2xs">
+              <div class="flex items-center justify-between mb-4">
+                <div>
+                  <h3 class="text-base font-extrabold text-[#1c1b18]">Proyek Berjalan</h3>
+                  <p class="text-xs text-[#8c867c] mt-0.5">Status penyerapan anggaran per tugas proyek</p>
+                </div>
+                <button onclick="switchTab('reports')" class="px-3.5 py-1.5 rounded-full bg-[#f7f5f0] hover:bg-[#ebe6dc] border border-[#e3ddd1] text-xs font-bold text-[#1c1b18] transition-colors">
+                  Semua proyek
+                </button>
+              </div>
+
+              <div class="space-y-3.5">
+                ${groupedProjects.length === 0 ? `
+                  <p class="text-xs text-[#8c867c] text-center py-6">Belum ada proyek berjalan.</p>
+                ` : ''}
+
+                ${groupedProjects.slice(0, 4).map((proj, pIdx) => {
+                  const ratio = proj.pemasukan > 0 ? Math.min(Math.round((proj.pengeluaranRiil / proj.pemasukan) * 100), 100) : (proj.pengeluaranRiil > 0 ? 100 : 0);
+                  const isOver = proj.selisih < 0;
+                  return `
+                    <div class="p-4 rounded-2xl bg-[#faf8f5] border border-[#ede8df]">
+                      <div class="flex items-center justify-between gap-3 mb-2">
+                        <div class="flex items-center gap-2.5 min-w-0">
+                          <span class="w-2.5 h-2.5 rounded-full shrink-0 ${isOver ? 'bg-red-500' : 'bg-[#eab308]'}"></span>
+                          <p class="text-sm font-bold text-[#1c1b18] truncate">${proj.projectName}</p>
+                        </div>
+                        <span class="text-xs font-extrabold shrink-0 ${isOver ? 'text-red-600' : 'text-emerald-700'}">
+                          Sisa: ${formatIDR(proj.selisih)}
+                        </span>
+                      </div>
+
+                      <div class="w-full h-2 rounded-full bg-[#e8e3da] overflow-hidden mb-2">
+                        <div class="h-full rounded-full ${isOver ? 'bg-red-500' : 'bg-[#1c1b18]'}" style="width: ${ratio}%"></div>
+                      </div>
+
+                      <div class="flex items-center justify-between text-[11px] text-[#78736a]">
+                        <span>${currentUser.role === 'admin' ? `PIC: <strong class="text-[#1c1b18]">${proj.empName}</strong> &bull; ` : ''}${proj.items.length} rincian</span>
+                        <span>Terpakai ${formatIDR(proj.pengeluaranRiil)} / ${formatIDR(proj.pemasukan)}</span>
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+
+            <!-- Kanan (5 Kolom): Proporsi Karyawan (Admin) atau Ringkasan Pengguna -->
+            <div class="lg:col-span-5 bg-white p-6 rounded-3xl border border-[#ebe7df] shadow-2xs">
+              ${currentUser.role === 'admin' ? `
+                <div class="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 class="text-base font-extrabold text-[#1c1b18]">Realisasi per Karyawan</h3>
+                    <p class="text-xs text-[#8c867c] mt-0.5">Perbandingan total pengeluaran antar staf</p>
+                  </div>
+                  <button onclick="switchTab('settings')" class="px-3.5 py-1.5 rounded-full bg-[#f7f5f0] hover:bg-[#ebe6dc] border border-[#e3ddd1] text-xs font-bold text-[#1c1b18] transition-colors">
+                    Staf
+                  </button>
+                </div>
+
+                <div class="space-y-4 mt-2">
+                  ${empBreakdown.length === 0 ? `<p class="text-xs text-[#8c867c] text-center py-6">Belum ada data karyawan.</p>` : ''}
+                  ${empBreakdown.map(emp => {
+                    const sharePct = totalPengeluaran > 0 ? Math.round((emp.spent / totalPengeluaran) * 100) : 0;
+                    return `
+                      <div class="space-y-1.5">
+                        <div class="flex items-center justify-between text-xs">
+                          <div class="flex items-center gap-2.5 min-w-0">
+                            ${renderAvatar(emp, "w-7 h-7", "text-[11px]", emp.badgeClass)}
+                            <span class="font-bold text-[#1c1b18] truncate">${emp.name}</span>
+                          </div>
+                          <div class="text-right shrink-0">
+                            <span class="font-extrabold text-[#1c1b18]">${formatIDR(emp.spent)}</span>
+                            <span class="text-[11px] text-[#8c867c] ml-1">(${sharePct}%)</span>
+                          </div>
+                        </div>
+                        <div class="w-full h-2 rounded-full bg-[#f2efe9] overflow-hidden">
+                          <div class="h-full rounded-full bg-[#eab308]" style="width: ${sharePct}%"></div>
+                        </div>
+                      </div>
+                    `;
+                  }).join('')}
+                </div>
+              ` : `
+                <div class="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 class="text-base font-extrabold text-[#1c1b18]">Ringkasan Kinerja Proyek</h3>
+                    <p class="text-xs text-[#8c867c] mt-0.5">Statistik pelaporan keuangan Anda</p>
+                  </div>
+                </div>
+                <div class="space-y-3 mt-2">
+                  <div class="p-4 rounded-2xl bg-[#faf8f5] border border-[#ede8df] flex items-center justify-between">
+                    <span class="text-xs font-semibold text-[#5c5850]">Rasio Penyerapan Dana</span>
+                    <span class="text-sm font-extrabold text-[#1c1b18]">${persenTerpakai}%</span>
+                  </div>
+                  <div class="p-4 rounded-2xl bg-[#faf8f5] border border-[#ede8df] flex items-center justify-between">
+                    <span class="text-xs font-semibold text-[#5c5850]">Total Item Pengeluaran</span>
+                    <span class="text-sm font-extrabold text-[#1c1b18]">${pengeluaranList.length} Transaksi</span>
+                  </div>
+                  <div class="p-4 rounded-2xl bg-[#faf8f5] border border-[#ede8df] flex items-center justify-between">
+                    <span class="text-xs font-semibold text-[#5c5850]">Bukti Struk Terlampir</span>
+                    <span class="text-sm font-extrabold text-emerald-700">${pengeluaranList.filter(i => i.receipt).length} Lampiran</span>
+                  </div>
+                </div>
+              `}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // ==========================================
+    // 3. MANAJEMEN LAPORAN (GROUP PER PROYEK & MULTI-ITEM PENGELUARAN)
+    // ==========================================
+    function getFilteredReports() {
+      if (currentUser.role === 'admin') {
+        return selectedEmpFilter === 'all'
+          ? reports
+          : reports.filter(r => Number(r.empId) === Number(selectedEmpFilter));
+      }
+      return reports.filter(r => Number(r.empId) === Number(currentUser.id));
+    }
+
+    function groupReportsByProject(list) {
+      const map = new Map();
+      list.forEach(item => {
+        const cleanProject = (item.projectName || 'Proyek Tanpa Nama').trim();
+        const key = currentUser.role === 'admin' && selectedEmpFilter === 'all'
+          ? `${item.empId}__${cleanProject.toLowerCase()}`
+          : cleanProject.toLowerCase();
+
+        if (!map.has(key)) {
+          map.set(key, {
+            key,
+            projectName: cleanProject,
+            empId: item.empId,
+            empName: users.find(u => Number(u.id) === Number(item.empId))?.name || 'Karyawan',
+            items: []
+          });
+        }
+        map.get(key).items.push(item);
+      });
+
+      return Array.from(map.values()).map(group => {
+        const pemasukan = group.items.filter(i => i.type === 'Pemasukan').reduce((s, i) => s + i.riil, 0);
+        const pengeluaranRiil = group.items.filter(i => i.type === 'Pengeluaran').reduce((s, i) => s + i.riil, 0);
+        const selisih = pemasukan - pengeluaranRiil;
+        return { ...group, pemasukan, pengeluaranRiil, selisih };
+      });
+    }
+
+    function renderReportManager() {
+      const filtered = getFilteredReports();
+      const groupedProjects = groupReportsByProject(filtered);
+      const existingProjectNames = [...new Set(filtered.map(r => r.projectName.trim()))];
+      const canAdd = currentUser.role === 'employee' || (currentUser.role === 'admin' && selectedEmpFilter !== 'all');
+
+      if (selectedPrintProject !== 'all' && !existingProjectNames.some(p => p.toLowerCase() === selectedPrintProject.toLowerCase())) {
+        selectedPrintProject = 'all';
+      }
+
+      const printProjects = selectedPrintProject === 'all'
+        ? groupedProjects
+        : groupedProjects.filter(g => g.projectName.toLowerCase() === selectedPrintProject.toLowerCase());
+      const printItems = printProjects.flatMap(g => g.items);
+
+      return `
+        <!-- TAMPILAN WEB INTERAKTIF -->
+        <div class="max-w-7xl mx-auto space-y-6 print-hidden">
+          <!-- Bar Kontrol Atas -->
+          <div class="bg-white p-4 md:p-5 rounded-3xl border border-[#ebe7df] shadow-2xs flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div class="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2.5">
+              ${currentUser.role === 'admin' ? `
+                <select onchange="handleFilterEmpChange(this.value)" class="w-full sm:w-auto border border-[#e3ddd1] rounded-2xl px-3.5 py-2.5 text-sm font-semibold bg-[#faf8f5] text-[#1c1b18] focus:outline-none focus:ring-2 focus:ring-[#1c1b18]">
+                  <option value="all" ${selectedEmpFilter === 'all' ? 'selected' : ''}>Semua Karyawan</option>
+                  ${users.filter(u => u.role === 'employee').map(u => `
+                    <option value="${u.id}" ${String(selectedEmpFilter) === String(u.id) ? 'selected' : ''}>${u.name}</option>
+                  `).join('')}
+                </select>
+              ` : ''}
+              <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 bg-[#faf8f5] border border-[#e3ddd1] rounded-2xl p-1.5">
+                <select onchange="handlePrintProjectChange(this.value)" title="Pilih cakupan proyek yang akan dicetak" class="bg-transparent px-2.5 py-1.5 text-xs sm:text-sm font-semibold text-[#1c1b18] focus:outline-none">
+                  <option value="all" ${selectedPrintProject === 'all' ? 'selected' : ''}>Cetak: Total Semua Proyek (${existingProjectNames.length})</option>
+                  ${existingProjectNames.map(pName => `
+                    <option value="${pName.replace(/"/g, '&quot;')}" ${selectedPrintProject.toLowerCase() === pName.toLowerCase() ? 'selected' : ''}>Proyek: ${pName}</option>
+                  `).join('')}
+                </select>
+                <button onclick="window.print()" class="flex items-center justify-center gap-2 bg-white hover:bg-[#f2efe9] text-[#1c1b18] border border-[#e3ddd1] shadow-2xs px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold transition-colors">
+                  ${icons.print} Pratinjau & Cetak (PDF)
+                </button>
+              </div>
+            </div>
+
+            ${canAdd ? `
+              <button onclick="openBatchForm('')" class="w-full lg:w-auto flex items-center justify-center gap-2 bg-[#1c1b18] hover:bg-[#32302b] text-white px-5 py-3 rounded-full text-sm font-bold shadow-sm transition-colors">
+                ${icons.plus} Proyek / Rincian Baru
+              </button>
+            ` : `
+              <span class="text-xs text-[#8c867c] italic">Pilih nama karyawan spesifik di filter untuk menambah laporan</span>
+            `}
+          </div>
+
+          <!-- FORM INPUT DANA ANGGARAN & MULTI-ITEM PENGELUARAN SEKALIGUS -->
+          ${isAddingBatch ? `
+            <div class="bg-white rounded-3xl border-2 border-[#1c1b18] shadow-xl overflow-hidden">
+              <div class="bg-[#1c1b18] text-white px-6 py-4 flex items-center justify-between">
+                <div>
+                  <h3 class="font-bold text-base flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 rounded-full bg-[#eab308]"></span>
+                    Input Anggaran & Multi-Rincian Pengeluaran Proyek
+                  </h3>
+                  <p class="text-xs text-[#c7c2b8] mt-0.5">Isi dana anggaran proyek (jika ada) serta tambahkan banyak item biaya pengeluaran sekaligus</p>
+                </div>
+                <button onclick="closeBatchForm()" class="text-white/80 hover:text-white text-xs font-bold px-3.5 py-1.5 rounded-full bg-white/10">Tutup ✕</button>
+              </div>
+
+              <form onsubmit="submitBatchForm(event)" class="p-6 space-y-6">
+                <!-- Bagian 1: Nama Proyek & Input Dana Anggaran -->
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 bg-[#faf8f5] p-4 rounded-2xl border border-[#e6e1d8]">
+                  <div class="lg:col-span-5">
+                    <label class="block text-xs font-bold text-[#1c1b18] uppercase mb-1.5">Nama Tugas Proyek *</label>
+                    <input
+                      type="text"
+                      list="project-suggestions"
+                      required
+                      value="${formProjectName}"
+                      oninput="formProjectName = this.value"
+                      placeholder="Ketik nama proyek baru atau pilih yang sudah ada..."
+                      class="w-full border border-[#d6d0c4] rounded-xl px-4 py-2.5 text-sm font-medium bg-white focus:ring-2 focus:ring-[#1c1b18] focus:outline-none"
+                    />
+                    <datalist id="project-suggestions">
+                      ${existingProjectNames.map(p => `<option value="${p}">`).join('')}
+                    </datalist>
+                    <p class="text-[11px] text-[#78736a] mt-1">Item dengan nama proyek sama otomatis digabung ke kartu proyek tersebut.</p>
+                  </div>
+
+                  <div class="lg:col-span-4">
+                    <label class="block text-xs font-bold text-emerald-800 uppercase mb-1.5">Dana Anggaran / Pemasukan (Rp)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value="${formBudgetAmount}"
+                      oninput="formBudgetAmount = this.value"
+                      placeholder="0 (Kosongkan jika sudah ada anggaran)"
+                      class="w-full border border-emerald-300 rounded-xl px-4 py-2.5 text-sm font-semibold text-emerald-900 bg-white focus:ring-2 focus:ring-[#1c1b18] focus:outline-none"
+                    />
+                    <p class="text-[11px] text-emerald-700 mt-1">Opsional: Input dana modal/anggaran masuk untuk proyek ini.</p>
+                  </div>
+
+                  <div class="lg:col-span-3">
+                    <label class="block text-xs font-bold text-[#1c1b18] uppercase mb-1.5">Tanggal Anggaran</label>
+                    <input
+                      type="date"
+                      value="${formBudgetDate}"
+                      onchange="formBudgetDate = this.value"
+                      class="w-full border border-[#d6d0c4] rounded-xl px-3.5 py-2.5 text-sm bg-white focus:ring-2 focus:ring-[#1c1b18] focus:outline-none"
+                    />
+                    <input
+                      type="text"
+                      value="${formBudgetDesc}"
+                      oninput="formBudgetDesc = this.value"
+                      placeholder="Keterangan dana anggaran"
+                      class="w-full border border-[#e3ddd1] rounded-lg px-2.5 py-1 text-xs bg-white mt-1.5 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <!-- Bagian 2: Daftar Rincian Khusus Pengeluaran -->
+                <div>
+                  <div class="flex items-center justify-between mb-2">
+                    <h4 class="text-xs font-bold text-[#1c1b18] uppercase tracking-wider">Rincian Item Biaya Pengeluaran</h4>
+                    <span class="text-xs text-[#78736a]">${formItems.length} baris pengeluaran</span>
+                  </div>
+
+                  <div class="overflow-x-auto border border-[#e6e1d8] rounded-2xl">
+                    <table class="w-full text-left text-xs">
+                      <thead class="bg-[#f4f1ea] text-[#5c5850] border-b border-[#e6e1d8]">
+                        <tr>
+                          <th class="p-3 w-10 text-center">No</th>
+                          <th class="p-3 min-w-[130px]">Tanggal</th>
+                          <th class="p-3 min-w-[220px]">Uraian / Keterangan Pengeluaran *</th>
+                          <th class="p-3 min-w-[150px] text-right">Nominal Pengeluaran (Rp) *</th>
+                          <th class="p-3 min-w-[145px] text-center">Bukti / Struk (Opsional)</th>
+                          <th class="p-3 w-12 text-center">Hapus</th>
+                        </tr>
+                      </thead>
+                      <tbody class="divide-y divide-[#f2efe9]">
+                        ${formItems.map((row, idx) => `
+                          <tr class="bg-white">
+                            <td class="p-2.5 text-center font-semibold text-[#8c867c]">${idx + 1}</td>
+                            <td class="p-2.5">
+                              <input type="date" required value="${row.date}" onchange="updateFormItem(${idx}, 'date', this.value)" class="w-full border border-[#dfd9cd] rounded-lg px-2.5 py-1.5 bg-[#faf8f5] focus:bg-white">
+                            </td>
+                            <td class="p-2.5">
+                              <input type="text" required placeholder="Contoh: Beli material / Ongkos kirim" value="${row.desc}" oninput="updateFormItem(${idx}, 'desc', this.value)" class="w-full border border-[#dfd9cd] rounded-lg px-2.5 py-1.5 bg-[#faf8f5] focus:bg-white">
+                            </td>
+                            <td class="p-2.5">
+                              <input type="number" required min="0" placeholder="0" value="${row.riil}" oninput="updateFormItem(${idx}, 'riil', this.value)" class="w-full border border-[#dfd9cd] rounded-lg px-2.5 py-1.5 text-right font-semibold bg-[#faf8f5] focus:bg-white">
+                            </td>
+                            <td class="p-2.5 text-center">
+                              ${row.receipt ? `
+                                <div class="flex items-center justify-center gap-1.5">
+                                  <button type="button" onclick="openReceiptPreview('${row.receipt}', 'Struk Baris #${idx + 1}')" class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold hover:bg-emerald-100">
+                                    <img src="${row.receipt}" class="w-4 h-4 rounded object-cover"> Lihat
+                                  </button>
+                                  <button type="button" onclick="removeFormItemReceipt(${idx})" class="text-red-500 hover:bg-red-50 p-1 rounded" title="Hapus struk">✕</button>
+                                </div>
+                              ` : `
+                                <label class="cursor-pointer inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#f4f1ea] hover:bg-[#e6e1d8] text-[#5c5850] font-semibold transition-colors">
+                                  ${icons.receipt} <span>Upload</span>
+                                  <input type="file" accept="image/*" onchange="handleFormItemReceipt(${idx}, event)" class="hidden">
+                                </label>
+                              `}
+                            </td>
+                            <td class="p-2.5 text-center">
+                              ${formItems.length > 1 ? `
+                                <button type="button" onclick="removeFormItemRow(${idx})" class="text-red-500 hover:bg-red-50 p-1.5 rounded-lg" title="Hapus baris">
+                                  ${icons.trash}
+                                </button>
+                              ` : `<span class="text-[#c7c2b8]">-</span>`}
+                            </td>
+                          </tr>
+                        `).join('')}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div class="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
+                  <button type="button" onclick="addFormItemRow()" class="w-full sm:w-auto flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-full border-2 border-dashed border-[#1c1b18] text-[#1c1b18] hover:bg-[#f4f1ea] text-xs font-bold transition-colors">
+                    ${icons.plus} Tambah Baris Item Pengeluaran
+                  </button>
+
+                  <div class="flex items-center gap-3 w-full sm:w-auto">
+                    <button type="button" onclick="closeBatchForm()" class="flex-1 sm:flex-none px-5 py-2.5 rounded-full border border-[#dfd9cd] text-[#5c5850] hover:bg-[#faf8f5] text-sm font-bold">
+                      Batal
+                    </button>
+                    <button type="submit" class="flex-1 sm:flex-none px-6 py-2.5 rounded-full bg-[#1c1b18] hover:bg-[#32302b] text-white text-sm font-bold shadow-sm">
+                      Simpan Semua Rincian
+                    </button>
+                  </div>
+                </div>
+              </form>
+            </div>
+          ` : ''}
+
+          <!-- DAFTAR KARTU PROYEK TERKELOMPOK -->
+          ${groupedProjects.length === 0 ? `
+            <div class="bg-white rounded-3xl border border-[#ebe7df] p-12 text-center">
+              <p class="text-[#8c867c] text-sm mb-3">Belum ada data laporan keuangan proyek.</p>
+              ${canAdd ? `<button onclick="openBatchForm('')" class="bg-[#1c1b18] text-white px-5 py-2.5 rounded-full text-xs font-bold">+ Buat Proyek Pertama</button>` : ''}
+            </div>
+          ` : `
+            <div class="space-y-6">
+              ${groupedProjects.map(group => `
+                <div class="bg-white rounded-3xl border border-[#ebe7df] shadow-2xs overflow-hidden">
+                  <!-- Header Kartu Proyek -->
+                  <div class="bg-[#faf8f5] px-6 py-4 border-b border-[#ebe7df] flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                    <div class="flex items-start gap-3">
+                      <div class="w-10 h-10 rounded-2xl bg-[#1c1b18] text-[#eab308] flex items-center justify-center shrink-0 mt-0.5">
+                        ${icons.folder}
+                      </div>
+                      <div>
+                        <div class="flex flex-wrap items-center gap-2">
+                          <h3 class="text-base font-extrabold text-[#1c1b18]">${group.projectName}</h3>
+                          <span class="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-[#ebe6dc] text-[#5c5850]">${group.items.length} item</span>
+                        </div>
+                        ${currentUser.role === 'admin' ? `<p class="text-xs text-[#78736a] mt-0.5">Penanggung Jawab: <strong class="text-[#1c1b18]">${group.empName}</strong></p>` : ''}
+                      </div>
+                    </div>
+
+                    <!-- Rekapitulasi Otomatis Per Proyek -->
+                    <div class="flex flex-wrap items-center gap-4 sm:gap-6 bg-white px-4 py-2.5 rounded-2xl border border-[#e6e1d8] text-xs">
+                      <div>
+                        <span class="text-[#8c867c] block">Dana Anggaran</span>
+                        <span class="font-extrabold text-emerald-700 text-sm">${formatIDR(group.pemasukan)}</span>
+                      </div>
+                      <div class="h-7 w-px bg-[#ebe7df] hidden sm:block"></div>
+                      <div>
+                        <span class="text-[#8c867c] block">Total Pengeluaran</span>
+                        <span class="font-extrabold text-[#1c1b18] text-sm">${formatIDR(group.pengeluaranRiil)}</span>
+                      </div>
+                      <div class="h-7 w-px bg-[#ebe7df] hidden sm:block"></div>
+                      <div>
+                        <span class="text-[#8c867c] block">Sisa / Selisih Anggaran</span>
+                        <span class="font-extrabold text-sm ${group.selisih >= 0 ? 'text-emerald-700' : 'text-red-600'}">
+                          ${group.selisih >= 0 ? '+' : ''}${formatIDR(group.selisih)}
+                        </span>
+                      </div>
+                      <button onclick="printSpecificProject('${group.projectName.replace(/'/g, "\\'")}')" title="Cetak PDF khusus proyek ini" class="ml-auto sm:ml-2 flex items-center gap-1 bg-[#f4f1ea] hover:bg-[#e6e1d8] text-[#1c1b18] px-3.5 py-2 rounded-full font-bold transition-colors">
+                        ${icons.print} Cetak Proyek
+                      </button>
+                      ${canAdd ? `
+                        <button onclick="openBatchForm('${group.projectName.replace(/'/g, "\\'")}')" class="flex items-center gap-1 bg-[#1c1b18] hover:bg-[#32302b] text-white px-3.5 py-2 rounded-full font-bold transition-colors">
+                          ${icons.plus} Tambah Rincian
+                        </button>
+                      ` : ''}
+                    </div>
+                  </div>
+
+                  <!-- Tabel Rincian Item dalam Proyek -->
+                  <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm">
+                      <thead class="bg-white text-[#78736a] text-xs uppercase border-b border-[#f2efe9]">
+                        <tr>
+                          <th class="px-6 py-3 font-bold w-32">Tanggal</th>
+                          <th class="px-6 py-3 font-bold">Uraian / Keterangan</th>
+                          <th class="px-6 py-3 font-bold w-36">Kategori</th>
+                          <th class="px-6 py-3 font-bold text-center w-28">Struk</th>
+                          <th class="px-6 py-3 font-bold text-right w-44">Nominal (Rp)</th>
+                          <th class="px-6 py-3 font-bold text-center w-28">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody class="divide-y divide-[#f2efe9] text-[#1c1b18]">
+                        ${group.items.map(row => {
+                          const isEditing = editingReportId === row.id;
+
+                          return `
+                            <tr class="hover:bg-[#faf8f5] transition-colors">
+                              <td class="px-6 py-3.5 text-xs whitespace-nowrap text-[#5c5850]">
+                                ${isEditing
+                                  ? `<input type="date" value="${editFormData.date}" onchange="editFormData.date = this.value" class="border border-[#d6d0c4] rounded-lg px-2 py-1 text-xs w-full">`
+                                  : row.date}
+                              </td>
+                              <td class="px-6 py-3.5">
+                                ${isEditing
+                                  ? `<div class="space-y-1">
+                                      <input type="text" value="${editFormData.projectName}" oninput="editFormData.projectName = this.value" class="border border-[#d6d0c4] rounded-lg px-2 py-1 text-xs w-full font-semibold" placeholder="Nama Proyek">
+                                      <input type="text" value="${editFormData.desc}" oninput="editFormData.desc = this.value" class="border border-[#d6d0c4] rounded-lg px-2 py-1 text-xs w-full" placeholder="Keterangan">
+                                     </div>`
+                                  : `<span class="font-semibold text-[#1c1b18]">${row.desc || '-'}</span>`}
+                              </td>
+                              <td class="px-6 py-3.5">
+                                ${isEditing
+                                  ? `<select onchange="editFormData.type = this.value; render();" class="border border-[#d6d0c4] rounded-lg px-2 py-1 text-xs w-full">
+                                      <option value="Pengeluaran" ${editFormData.type === 'Pengeluaran' ? 'selected' : ''}>Pengeluaran</option>
+                                      <option value="Pemasukan" ${editFormData.type === 'Pemasukan' ? 'selected' : ''}>Dana Anggaran</option>
+                                     </select>`
+                                  : `<span class="px-2.5 py-1 rounded-full text-xs font-bold ${row.type === 'Pemasukan' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-[#f4f1ea] text-[#5c5850] border border-[#e3ddd1]'}">
+                                      ${row.type === 'Pemasukan' ? 'Dana Anggaran' : 'Pengeluaran'}
+                                     </span>`}
+                              </td>
+                              <td class="px-6 py-3.5 text-center">
+                                ${isEditing ? (
+                                  editFormData.type === 'Pengeluaran' ? `
+                                    <div class="flex flex-col items-center gap-1">
+                                      ${editFormData.receipt ? `
+                                        <div class="flex items-center gap-1">
+                                          <button type="button" onclick="openReceiptPreview('${editFormData.receipt}', '${(editFormData.desc || 'Struk').replace(/'/g, "\\'")}')" class="text-[11px] font-bold text-emerald-700 underline">Lihat</button>
+                                          <button type="button" onclick="editFormData.receipt = ''; render();" class="text-[11px] text-red-500">✕</button>
+                                        </div>
+                                      ` : ''}
+                                      <label class="cursor-pointer px-2 py-1 rounded bg-[#f4f1ea] hover:bg-[#e6e1d8] text-[11px] font-semibold text-[#1c1b18]">
+                                        ${editFormData.receipt ? 'Ganti' : '+ Struk'}
+                                        <input type="file" accept="image/*" onchange="handleEditReceiptUpload(event)" class="hidden">
+                                      </label>
+                                    </div>
+                                  ` : `<span class="text-xs text-[#c7c2b8]">-</span>`
+                                ) : (
+                                  row.receipt ? `
+                                    <button type="button" onclick="openReceiptPreview('${row.receipt}', '${(row.desc || row.projectName).replace(/'/g, "\\'")}')" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#f4f1ea] hover:bg-[#eab308]/20 text-[#1c1b18] border border-[#e3ddd1] text-xs font-bold transition-colors">
+                                      <img src="${row.receipt}" class="w-4 h-4 rounded-full object-cover"> Struk
+                                    </button>
+                                  ` : `<span class="text-xs text-[#c7c2b8]">-</span>`
+                                )}
+                              </td>
+                              <td class="px-6 py-3.5 text-right font-bold">
+                                ${isEditing
+                                  ? `<input type="number" value="${editFormData.riil}" oninput="editFormData.riil = Number(this.value)" class="border border-[#d6d0c4] rounded-lg px-2 py-1 text-xs text-right w-full">`
+                                  : formatIDR(row.riil)}
+                              </td>
+                              <td class="px-6 py-3.5 text-center whitespace-nowrap">
+                                ${isEditing ? `
+                                  <div class="flex items-center justify-center gap-2">
+                                    <button onclick="saveInlineEdit()" class="text-xs font-bold text-emerald-700 hover:underline">Simpan</button>
+                                    <button onclick="cancelInlineEdit()" class="text-xs text-[#8c867c] hover:underline">Batal</button>
+                                  </div>
+                                ` : `
+                                  <div class="flex items-center justify-center gap-3">
+                                    <button onclick="startInlineEdit(${row.id})" class="text-xs font-bold text-[#1c1b18] hover:underline">Edit</button>
+                                    <button onclick="askDeleteReport(${row.id})" class="text-xs font-semibold text-red-600 hover:underline">Hapus</button>
+                                  </div>
+                                `}
+                              </td>
+                            </tr>
+                          `;
+                        }).join('')}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          `}
+        </div>
+
+        <!-- ========================================== -->
+        <!-- DOKUMEN CETAK RESMI (PDF / PRINT)          -->
+        <!-- ========================================== -->
+        <div class="hidden print-block bg-white text-black p-6">
+          <!-- KOP SURAT PERUSAHAAN -->
+          <div class="border-b-4 border-black pb-4 mb-6 flex items-center gap-5">
+            <div class="shrink-0 flex items-center justify-center">
+              ${renderBerjayaLogo("h-16")}
+            </div>
+            <div>
+              <h1 class="text-2xl font-black uppercase tracking-wide text-black">PT BERJAYA MAKMUR INDONESIA</h1>
+              <p class="text-xs text-black mt-1">Komplek DDN No.Kav 23, Harjamukti, Kec. Cimanggis, Kota Depok, Jawa Barat 16454, 02138852384, https://www.berjaya-makmur-indonesia.co.id/</p>
+            </div>
+          </div>
+
+          <div class="text-center mb-6">
+            <h2 class="text-lg font-bold uppercase underline">
+              ${selectedPrintProject === 'all' ? 'Laporan Keuangan Tugas Proyek (Total Proyek)' : `Laporan Keuangan Tugas Proyek: ${selectedPrintProject}`}
+            </h2>
+            <p class="text-xs mt-1">
+              ${currentUser.role === 'admin'
+                ? (selectedEmpFilter === 'all' ? 'Rekapitulasi Seluruh Karyawan' : `Karyawan: ${users.find(u => Number(u.id) === Number(selectedEmpFilter))?.name || ''}`)
+                : `Pelaksana Proyek: ${currentUser.name}`}
+            </p>
+          </div>
+
+          <!-- Tabel Rincian per Proyek -->
+          ${printProjects.map((group, gIdx) => `
+            <div class="mb-6 page-break-inside-avoid">
+              <div class="bg-slate-100 border border-black border-b-0 px-3 py-2 flex justify-between items-center text-xs font-bold">
+                <span>${gIdx + 1}. NAMA PROYEK: ${group.projectName.toUpperCase()}</span>
+                ${currentUser.role === 'admin' && selectedEmpFilter === 'all' ? `<span>PIC: ${group.empName}</span>` : ''}
+              </div>
+              <table class="w-full text-xs border-collapse border border-black">
+                <thead>
+                  <tr class="bg-slate-50">
+                    <th class="border border-black p-2 w-8 text-center">No</th>
+                    <th class="border border-black p-2 w-24 text-left">Tanggal</th>
+                    <th class="border border-black p-2 text-left">Uraian / Keterangan</th>
+                    <th class="border border-black p-2 w-28 text-center">Kategori</th>
+                    <th class="border border-black p-2 w-36 text-right">Nominal (Rp)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${group.items.map((item, idx) => `
+                    <tr>
+                      <td class="border border-black p-1.5 text-center">${idx + 1}</td>
+                      <td class="border border-black p-1.5 whitespace-nowrap">${item.date}</td>
+                      <td class="border border-black p-1.5">${item.desc || '-'}</td>
+                      <td class="border border-black p-1.5 text-center">${item.type === 'Pemasukan' ? 'Dana Anggaran' : 'Pengeluaran'}</td>
+                      <td class="border border-black p-1.5 text-right">${formatNumber(item.riil)}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+                <tfoot>
+                  <tr class="font-bold bg-slate-50">
+                    <td colspan="4" class="border border-black p-1.5 text-right">
+                      Sub-Total Proyek (Anggaran: Rp ${formatNumber(group.pemasukan)} | Pengeluaran: Rp ${formatNumber(group.pengeluaranRiil)}) &rarr; Sisa / Selisih:
+                    </td>
+                    <td class="border border-black p-1.5 text-right">
+                      ${group.selisih >= 0 ? '+' : ''}${formatNumber(group.selisih)}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          `).join('')}
+
+          <!-- Ringkasan Grand Total Keseluruhan -->
+          <div class="border border-black p-3 bg-slate-50 text-xs font-bold flex justify-between items-center mb-10 page-break-inside-avoid">
+            <span>
+              ${selectedPrintProject === 'all'
+                ? `GRAND TOTAL KESELURUHAN (${printProjects.length} PROYEK)`
+                : `TOTAL PROYEK: ${selectedPrintProject.toUpperCase()}`}
+            </span>
+            <div class="flex gap-6">
+              <span>Total Dana Anggaran: Rp ${formatNumber(printItems.filter(r => r.type === 'Pemasukan').reduce((s, r) => s + r.riil, 0))}</span>
+              <span>Total Pengeluaran: Rp ${formatNumber(printItems.filter(r => r.type === 'Pengeluaran').reduce((s, r) => s + r.riil, 0))}</span>
+              <span>Sisa / Selisih: Rp ${formatNumber(printItems.filter(r => r.type === 'Pemasukan').reduce((s, r) => s + r.riil, 0) - printItems.filter(r => r.type === 'Pengeluaran').reduce((s, r) => s + r.riil, 0))}</span>
+            </div>
+          </div>
+
+          <!-- Kolom Tanda Tangan -->
+          <div class="flex justify-end pr-8 mt-12 page-break-inside-avoid">
+            <div class="text-center text-xs">
+              <p>Depok, ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+              <p class="mt-1 mb-16">Dibuat Oleh,</p>
+              <p class="font-bold uppercase underline">${currentUser.name}</p>
+              <p class="mt-0.5">PT Berjaya Makmur Indonesia</p>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Event Handler Form Multi-Rincian Pengeluaran & Anggaran
+    function handleFilterEmpChange(val) {
+      selectedEmpFilter = val;
+      selectedPrintProject = 'all';
+      isAddingBatch = false;
+      render();
+    }
+
+    function handlePrintProjectChange(val) {
+      selectedPrintProject = val;
+      render();
+    }
+
+    function printSpecificProject(projectName) {
+      selectedPrintProject = projectName;
+      render();
+      setTimeout(() => {
+        window.print();
+      }, 100);
+    }
+
+    function openBatchForm(prefillProject = '') {
+      isAddingBatch = true;
+      formProjectName = prefillProject;
+      formBudgetAmount = '';
+      formBudgetDate = getTodayDate();
+      formBudgetDesc = 'Dana Anggaran Proyek';
+      formItems = [
+        { tempId: Date.now(), riil: '', date: getTodayDate(), desc: '', receipt: '' }
+      ];
+      render();
+    }
+
+    function closeBatchForm() {
+      isAddingBatch = false;
+      render();
+    }
+
+    function addFormItemRow() {
+      formItems.push({
+        tempId: Date.now() + Math.random(),
+        riil: '',
+        date: getTodayDate(),
+        desc: '',
+        receipt: ''
+      });
+      render();
+    }
+
+    function removeFormItemRow(idx) {
+      if (formItems.length <= 1) return;
+      formItems.splice(idx, 1);
+      render();
+    }
+
+    function updateFormItem(idx, field, value) {
+      formItems[idx][field] = value;
+    }
+
+    function handleFormItemReceipt(idx, e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      compressImageToDataURL(file, (dataUrl) => {
+        formItems[idx].receipt = dataUrl;
+        render();
+      }, 420, 0.72);
+    }
+
+    function removeFormItemReceipt(idx) {
+      formItems[idx].receipt = '';
+      render();
+    }
+
+    function handleEditReceiptUpload(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      compressImageToDataURL(file, (dataUrl) => {
+        editFormData.receipt = dataUrl;
+        render();
+      }, 420, 0.72);
+    }
+
+    function openReceiptPreview(imageSrc, title = 'Bukti Pengeluaran') {
+      previewReceiptModal = { imageSrc, title };
+      render();
+    }
+
+    function closeReceiptPreview() {
+      previewReceiptModal = null;
+      render();
+    }
+
+    async function submitBatchForm(e) {
+      e.preventDefault();
+      const project = formProjectName.trim();
+      if (!project) {
+        showToast('Nama proyek wajib diisi!', 'error');
+        return;
+      }
+
+      const targetEmpId = currentUser.role === 'admin' && selectedEmpFilter !== 'all'
+        ? Number(selectedEmpFilter)
+        : Number(currentUser.id);
+
+      const newRecords = [];
+      let baseId = Date.now();
+
+      const budgetVal = Number(formBudgetAmount) || 0;
+      if (budgetVal > 0) {
+        newRecords.push({
+          id: baseId++,
+          empId: targetEmpId,
+          projectName: project,
+          type: 'Pemasukan',
+          plafon: budgetVal,
+          riil: budgetVal,
+          date: formBudgetDate || getTodayDate(),
+          desc: formBudgetDesc.trim() || 'Dana Anggaran Proyek',
+          receipt: ''
+        });
+      }
+
+      formItems.forEach((item, idx) => {
+        newRecords.push({
+          id: baseId + idx,
+          empId: targetEmpId,
+          projectName: project,
+          type: 'Pengeluaran',
+          plafon: 0,
+          riil: Number(item.riil) || 0,
+          date: item.date || getTodayDate(),
+          desc: item.desc.trim(),
+          receipt: item.receipt || ''
+        });
+      });
+
+      reports = [...reports, ...newRecords];
+      isAddingBatch = false;
+      showToast(`${newRecords.length} rincian berhasil disimpan ke proyek "${project}"`);
+      render();
+
+      await pushToGSheet({ action: 'addReports', records: newRecords });
+    }
+
+    function startInlineEdit(id) {
+      const target = reports.find(r => r.id === id);
+      if (!target) return;
+      editingReportId = id;
+      editFormData = { ...target };
+      render();
+    }
+
+    function cancelInlineEdit() {
+      editingReportId = null;
+      editFormData = {};
+      render();
+    }
+
+    async function saveInlineEdit() {
+      const updated = {
+        ...editFormData,
+        projectName: editFormData.projectName.trim() || 'Proyek Tanpa Nama',
+        plafon: Number(editFormData.plafon) || 0,
+        riil: Number(editFormData.riil) || 0
+      };
+      reports = reports.map(r => r.id === editingReportId ? updated : r);
+      editingReportId = null;
+      showToast('Perubahan rincian berhasil disimpan');
+      render();
+
+      await pushToGSheet({ action: 'updateReport', record: updated });
+    }
+
+    function askDeleteReport(id) {
+      confirmDeleteId = id;
+      render();
+    }
+
+    async function confirmDeleteReport() {
+      const targetId = confirmDeleteId;
+      reports = reports.filter(r => r.id !== targetId);
+      confirmDeleteId = null;
+      showToast('Item laporan berhasil dihapus', 'info');
+      render();
+
+      await pushToGSheet({ action: 'deleteReport', id: targetId });
+    }
+
+    // ==========================================
+    // 4. SETTINGS (ADMIN: PROFIL, PIN & KARYAWAN | USER: PROFIL & GANTI PIN)
+    // ==========================================
+    function renderSettings() {
+      const profileAndPinCards = `
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <!-- Kartu Foto Profil -->
+          <div class="bg-white p-6 rounded-3xl border border-[#ebe7df] shadow-2xs flex flex-col items-center text-center self-start">
+            <h3 class="text-base font-extrabold text-[#1c1b18] mb-1 self-start">Foto Profil ${currentUser.role === 'admin' ? 'Administrator' : 'Karyawan'}</h3>
+            <p class="text-xs text-[#78736a] mb-6 self-start text-left">Unggah foto profil Anda agar tampil di sidebar dan sistem.</p>
+
+            <div class="mb-4">
+              ${renderAvatar(currentUser, "w-24 h-24", "text-3xl", "bg-[#1c1b18] text-[#eab308]")}
+            </div>
+            <p class="text-sm font-bold text-[#1c1b18]">${currentUser.name}</p>
+            <p class="text-xs text-[#8c867c] mb-5">ID Akun: #${currentUser.id} (${currentUser.role === 'admin' ? 'Admin' : 'Karyawan'})</p>
+
+            <label class="w-full cursor-pointer bg-[#f4f1ea] hover:bg-[#e6e1d8] text-[#1c1b18] border border-[#dfd9cd] py-2.5 px-4 rounded-full text-xs font-bold transition-colors">
+              Pilih & Upload Foto Baru
+              <input type="file" accept="image/*" onchange="handleUploadMyPhoto(event)" class="hidden">
+            </label>
+
+            ${currentUser.photo ? `
+              <button onclick="handleRemoveMyPhoto()" class="mt-2.5 text-xs text-red-600 hover:underline font-semibold">
+                Hapus Foto Profil
+              </button>
+            ` : ''}
+          </div>
+
+          <!-- Kartu Ganti PIN -->
+          <div class="bg-white p-6 rounded-3xl border border-[#ebe7df] shadow-2xs self-start">
+            <h3 class="text-base font-extrabold text-[#1c1b18] mb-1">Ubah PIN Keamanan ${currentUser.role === 'admin' ? 'Admin' : ''}</h3>
+            <p class="text-xs text-[#78736a] mb-5">Perbarui PIN login pribadi Anda agar akun tetap aman.</p>
+
+            <form onsubmit="handleChangePin(event)" class="space-y-4">
+              <div>
+                <label class="block text-xs font-bold text-[#5c5850] mb-1">PIN Baru (4-6 Digit)</label>
+                <input type="password" id="pin-new" required maxlength="6" placeholder="••••" class="w-full border border-[#dfd9cd] rounded-2xl px-4 py-2.5 text-sm bg-[#faf8f5] focus:bg-white focus:ring-2 focus:ring-[#1c1b18] focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-bold text-[#5c5850] mb-1">Konfirmasi PIN Baru</label>
+                <input type="password" id="pin-confirm" required maxlength="6" placeholder="••••" class="w-full border border-[#dfd9cd] rounded-2xl px-4 py-2.5 text-sm bg-[#faf8f5] focus:bg-white focus:ring-2 focus:ring-[#1c1b18] focus:outline-none">
+              </div>
+              <button type="submit" class="w-full bg-[#1c1b18] hover:bg-[#32302b] text-white py-3 rounded-full text-sm font-bold transition-colors">
+                Simpan PIN Baru
+              </button>
+            </form>
+          </div>
+        </div>
+      `;
+
+      if (currentUser.role === 'admin') {
+        const employees = users.filter(u => u.role === 'employee');
+        return `
+          <div class="max-w-5xl mx-auto space-y-6">
+            ${profileAndPinCards}
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+              <!-- Form Tambah Karyawan -->
+              <div class="bg-white p-6 rounded-3xl border border-[#ebe7df] shadow-2xs self-start">
+                <h3 class="text-base font-extrabold text-[#1c1b18] mb-1">Tambah Akun Karyawan</h3>
+                <p class="text-xs text-[#78736a] mb-5">Karyawan baru dapat langsung login menggunakan PIN yang dibuat.</p>
+
+                <form onsubmit="handleAddEmployee(event)" class="space-y-4">
+                  <div class="flex items-center gap-4 bg-[#faf8f5] p-3 rounded-2xl border border-[#e6e1d8]">
+                    ${newEmpPhotoData 
+                      ? `<img src="${newEmpPhotoData}" class="w-12 h-12 rounded-full object-cover border border-[#d6d0c4] shrink-0">`
+                      : `<div class="w-12 h-12 rounded-full bg-[#e6e1d8] text-[#5c5850] flex items-center justify-center text-xs font-bold shrink-0">Foto</div>`
+                    }
+                    <div class="flex-1 min-w-0">
+                      <label class="block text-xs font-bold text-[#1c1b18] mb-1">Foto Profil (Opsional)</label>
+                      <input type="file" accept="image/*" onchange="handleNewEmpPhotoSelect(event)" class="text-xs text-[#78736a] file:mr-2 file:py-1 file:px-3 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-[#1c1b18] file:text-white hover:file:bg-[#32302b] cursor-pointer w-full">
+                    </div>
+                  </div>
+                  <div>
+                    <label class="block text-xs font-bold text-[#5c5850] mb-1">Nama Lengkap Karyawan</label>
+                    <input type="text" id="new-emp-name" required placeholder="Contoh: Andi Wijaya" class="w-full border border-[#dfd9cd] rounded-2xl px-4 py-2.5 text-sm bg-[#faf8f5] focus:bg-white focus:ring-2 focus:ring-[#1c1b18] focus:outline-none">
+                  </div>
+                  <div>
+                    <label class="block text-xs font-bold text-[#5c5850] mb-1">PIN Awal (4-6 Digit)</label>
+                    <input type="text" id="new-emp-pin" required maxlength="6" value="1234" class="w-full border border-[#dfd9cd] rounded-2xl px-4 py-2.5 text-sm bg-[#faf8f5] focus:bg-white focus:ring-2 focus:ring-[#1c1b18] focus:outline-none">
+                  </div>
+                  <button type="submit" class="w-full bg-[#1c1b18] hover:bg-[#32302b] text-white py-3 rounded-full text-sm font-bold transition-colors">
+                    + Daftarkan Karyawan
+                  </button>
+                </form>
+
+                <div class="mt-6 pt-5 border-t border-[#f2efe9]">
+                  <h4 class="text-xs font-bold uppercase text-[#8c867c] mb-2">Integrasi Database Cloud</h4>
+                  <button onclick="toggleGSheetModal(true)" class="w-full flex items-center justify-center gap-2 border border-[#dfd9cd] hover:bg-[#faf8f5] text-[#1c1b18] py-2.5 rounded-full text-xs font-bold transition-colors">
+                    ${icons.sheet} Konfigurasi Google Spreadsheet
+                  </button>
+                </div>
+              </div>
+
+              <!-- Daftar Karyawan -->
+              <div class="bg-white p-6 rounded-3xl border border-[#ebe7df] shadow-2xs">
+                <h3 class="text-base font-extrabold text-[#1c1b18] mb-1">Daftar Karyawan (${employees.length})</h3>
+                <p class="text-xs text-[#78736a] mb-4">Karyawan yang memiliki akses pelaporan proyek</p>
+
+                <div class="space-y-2.5 max-h-[420px] overflow-y-auto pr-1">
+                  ${employees.map((emp) => `
+                    <div class="flex items-center justify-between p-3.5 rounded-2xl bg-[#faf8f5] border border-[#ede8df]">
+                      <div class="flex items-center gap-3">
+                        ${renderAvatar(emp, "w-9 h-9", "text-xs", "bg-[#1c1b18] text-[#eab308]")}
+                        <div>
+                          <p class="text-sm font-bold text-[#1c1b18]">${emp.name}</p>
+                          <p class="text-[11px] text-[#8c867c]">ID Staf: #${emp.id}</p>
+                        </div>
+                      </div>
+                      <span class="text-xs font-mono font-bold bg-white border border-[#e3ddd1] px-3 py-1 rounded-full text-[#1c1b18]">
+                        PIN: ${emp.pin}
+                      </span>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      return `
+        <div class="max-w-3xl mx-auto">
+          ${profileAndPinCards}
+        </div>
+      `;
+    }
+
+    function handleNewEmpPhotoSelect(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      compressImageToDataURL(file, (dataUrl) => {
+        newEmpPhotoData = dataUrl;
+        render();
+      });
+    }
+
+    function handleUploadMyPhoto(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      compressImageToDataURL(file, async (dataUrl) => {
+        users = users.map(u => Number(u.id) === Number(currentUser.id) ? { ...u, photo: dataUrl } : u);
+        currentUser.photo = dataUrl;
+        showToast('Foto profil berhasil diperbarui!');
+        render();
+
+        await pushToGSheet({ action: 'updatePhoto', id: currentUser.id, photo: dataUrl });
+      });
+    }
+
+    async function handleRemoveMyPhoto() {
+      users = users.map(u => Number(u.id) === Number(currentUser.id) ? { ...u, photo: '' } : u);
+      currentUser.photo = '';
+      showToast('Foto profil dihapus');
+      render();
+
+      await pushToGSheet({ action: 'updatePhoto', id: currentUser.id, photo: '' });
+    }
+
+    async function handleAddEmployee(e) {
+      e.preventDefault();
+      const name = document.getElementById('new-emp-name').value.trim();
+      const pin = document.getElementById('new-emp-pin').value.trim();
+      if (!name || !pin) return;
+
+      const newUser = {
+        id: users.length > 0 ? Math.max(...users.map(u => Number(u.id))) + 1 : 1,
+        name: name,
+        role: 'employee',
+        pin: pin,
+        photo: newEmpPhotoData || ''
+      };
+
+      users = [...users, newUser];
+      newEmpPhotoData = '';
+      showToast(`Karyawan "${name}" berhasil ditambahkan`);
+      render();
+
+      await pushToGSheet({ action: 'addUser', user: newUser });
+    }
+
+    async function handleChangePin(e) {
+      e.preventDefault();
+      const pin1 = document.getElementById('pin-new').value.trim();
+      const pin2 = document.getElementById('pin-confirm').value.trim();
+
+      if (pin1 !== pin2) {
+        showToast('Konfirmasi PIN baru tidak cocok!', 'error');
+        return;
+      }
+
+      users = users.map(u => Number(u.id) === Number(currentUser.id) ? { ...u, pin: pin1 } : u);
+      currentUser.pin = pin1;
+      showToast('PIN berhasil diperbarui!');
+      render();
+
+      await pushToGSheet({ action: 'updatePin', id: currentUser.id, pin: pin1 });
+    }
+
+    // ==========================================
+    // 5. MODAL KONFIGURASI GOOGLE SPREADSHEET & HAPUS
+    // ==========================================
+    function toggleGSheetModal(state) {
+      showGSheetModal = state;
+      render();
+    }
+
+    function saveGSheetUrl(e) {
+      e.preventDefault();
+      const url = document.getElementById('gsheet-url-input').value.trim();
+      GSHEET_API_URL = url;
+      showGSheetModal = false;
+      if (url) {
+        syncFromGSheet();
+      } else {
+        showToast('Beralih ke mode penyimpanan lokal sesi ini', 'info');
+        render();
+      }
+    }
+
+    function renderGSheetModal() {
+      return `
+        <div class="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 print-hidden">
+          <div class="bg-white border border-[#e6e1d8] rounded-3xl shadow-2xl max-w-lg w-full p-6">
+            <div class="flex items-center justify-between pb-3 border-b border-[#f2efe9]">
+              <h3 class="text-base font-extrabold text-[#1c1b18] flex items-center gap-2">
+                ${icons.sheet} Koneksi Google Spreadsheet
+              </h3>
+              <button onclick="toggleGSheetModal(false)" class="text-[#8c867c] hover:text-[#1c1b18] font-bold">✕</button>
+            </div>
+
+            <form onsubmit="saveGSheetUrl(event)" class="mt-4 space-y-4">
+              <div class="bg-[#faf8f5] border border-[#e6e1d8] rounded-2xl p-3.5 text-xs text-[#5c5850] space-y-1.5">
+                <p class="font-bold text-[#1c1b18]">Cara Menghubungkan ke Google Sheets Anda:</p>
+                <ol class="list-decimal ml-4 space-y-1">
+                  <li>Buka Google Spreadsheet baru &rarr; klik menu <strong>Ekstensi &rarr; Apps Script</strong>.</li>
+                  <li>Tempel kode dari file <strong>Code.gs</strong> lalu klik <strong>Terapkan (Deploy) &rarr; Deployment Baru</strong>.</li>
+                  <li>Pilih jenis <strong>Aplikasi Web</strong>, atur akses <em>"Siapa saja (Anyone)"</em>, lalu salin URL Web App-nya ke bawah ini:</li>
+                </ol>
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-[#1c1b18] mb-1">URL Google Apps Script Web App</label>
+                <input
+                  type="url"
+                  id="gsheet-url-input"
+                  value="${GSHEET_API_URL}"
+                  placeholder="https://script.google.com/macros/s/AKfycb.../exec"
+                  class="w-full border border-[#dfd9cd] rounded-2xl px-3.5 py-2.5 text-xs bg-[#faf8f5] focus:bg-white focus:ring-2 focus:ring-[#1c1b18] focus:outline-none"
+                />
+              </div>
+
+              <div class="flex items-center justify-end gap-2 pt-2">
+                <button type="button" onclick="toggleGSheetModal(false)" class="px-4 py-2 rounded-full text-xs font-bold text-[#5c5850] hover:bg-[#f2efe9]">
+                  Batal
+                </button>
+                <button type="submit" class="px-5 py-2 rounded-full text-xs font-bold bg-[#1c1b18] hover:bg-[#32302b] text-white shadow-sm">
+                  Simpan & Sinkronkan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderDeleteModal() {
+      return `
+        <div class="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4 print-hidden">
+          <div class="bg-white border border-[#e6e1d8] rounded-3xl shadow-xl max-w-sm w-full p-6 text-center">
+            <h3 class="text-base font-extrabold text-[#1c1b18] mb-2">Hapus Item Laporan?</h3>
+            <p class="text-xs text-[#78736a] mb-6">Data yang dihapus akan otomatis hilang dari rekapitulasi proyek maupun Google Spreadsheet.</p>
+            <div class="flex gap-3">
+              <button onclick="confirmDeleteId = null; render();" class="flex-1 py-2.5 rounded-full border border-[#dfd9cd] text-xs font-bold text-[#5c5850] hover:bg-[#faf8f5]">Batal</button>
+              <button onclick="confirmDeleteReport()" class="flex-1 py-2.5 rounded-full bg-red-600 hover:bg-red-700 text-xs font-bold text-white">Ya, Hapus</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderReceiptPreviewModal() {
+      return `
+        <div onclick="closeReceiptPreview()" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 print-hidden">
+          <div onclick="event.stopPropagation()" class="bg-white border border-[#e6e1d8] rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden">
+            <div class="px-5 py-3.5 border-b border-[#f2efe9] flex items-center justify-between">
+              <h3 class="text-sm font-extrabold text-[#1c1b18] truncate pr-4">Bukti Struk: ${previewReceiptModal.title}</h3>
+              <button onclick="closeReceiptPreview()" class="text-[#8c867c] hover:text-[#1c1b18] font-bold text-sm px-2 py-1 rounded-lg hover:bg-[#f2efe9]">✕</button>
+            </div>
+            <div class="p-4 bg-[#faf8f5] flex items-center justify-center max-h-[75vh] overflow-auto">
+              <img src="${previewReceiptModal.imageSrc}" alt="Bukti Struk" class="max-w-full max-h-[65vh] rounded-2xl shadow-sm object-contain">
+            </div>
+            <div class="px-5 py-3 border-t border-[#f2efe9] flex justify-end gap-2">
+              <a href="${previewReceiptModal.imageSrc}" download="struk-pengeluaran.jpg" class="px-4 py-2 rounded-full bg-[#f4f1ea] hover:bg-[#e6e1d8] text-[#1c1b18] text-xs font-bold">Unduh Gambar</a>
+              <button onclick="closeReceiptPreview()" class="px-4 py-2 rounded-full bg-[#1c1b18] hover:bg-[#32302b] text-white text-xs font-bold">Tutup</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    // Inisialisasi Aplikasi
+    window.onload = function() {
+      render();
+      if (GSHEET_API_URL) {
+        syncFromGSheet();
+      }
+    };
+  </script>
+</body>
+</html>
